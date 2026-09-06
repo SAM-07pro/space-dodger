@@ -103,10 +103,19 @@
     const bossBarWrap = document.getElementById('boss-bar-wrap');
     const bossHpBar = document.getElementById('boss-hp-bar');
 
-    // Synth Sound FX System
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Audio Context Setup
+    let audioCtx = null;
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
     function playSound(type) {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if (!audioCtx || audioCtx.state !== 'running') return;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain); gain.connect(audioCtx.destination);
@@ -152,7 +161,7 @@
     // Active Power-ups
     let tripleLaserTimer = 0, shieldActive = false, timeSlowTimer = 0;
 
-    // Player with Velocity & Power State
+    // Player Object
     let player = {
       x: 195, y: 520, w: 30, h: 32,
       vx: 0, speed: 0.8, friction: 0.85,
@@ -176,7 +185,9 @@
 
     function updateTouchPos(e) {
       const rect = canvas.getBoundingClientRect();
-      player.x = Math.max(0, Math.min(canvas.width - player.w, (e.clientX - rect.left) - player.w / 2));
+      const scaleX = canvas.width / rect.width;
+      const mouseX = (e.clientX - rect.left) * scaleX;
+      player.x = Math.max(0, Math.min(canvas.width - player.w, mouseX - player.w / 2));
     }
 
     const setupBtn = (id, key) => {
@@ -258,6 +269,7 @@
     }
 
     function startGame() {
+      initAudio();
       if (isPaused) { togglePause(); return; }
       score = 0; combo = 0; lives = 3; lastBossScore = 0;
       tripleLaserTimer = 0; shieldActive = false; timeSlowTimer = 0;
@@ -312,7 +324,7 @@
       ctx.clearRect(-10, -10, canvas.width + 20, canvas.height + 20);
       drawSynthGrid();
 
-      // Timers & Multipliers
+      // Timers
       if (tripleLaserTimer > 0) tripleLaserTimer--;
       if (timeSlowTimer > 0) timeSlowTimer--;
       if (comboTimer > 0) { comboTimer--; if (comboTimer === 0) combo = 0; }
@@ -362,7 +374,7 @@
         }
       }
 
-      // Render & Update Bullets (Filter pattern)
+      // Render & Update Bullets
       ctx.fillStyle = '#ff007f'; ctx.shadowBlur = 8; ctx.shadowColor = '#ff007f';
       bullets = bullets.filter(b => {
         b.x += b.vx; b.y += b.vy;
@@ -371,7 +383,7 @@
       });
       ctx.shadowBlur = 0;
 
-      // Power-Up Physics & Collisions (Filter pattern)
+      // Power-Up Physics & Collisions
       const pCenterX = player.x + player.w / 2;
       const pCenterY = player.y + player.h / 2;
       powerups = powerups.filter(p => {
@@ -382,7 +394,7 @@
         ctx.fillStyle = '#05000a'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
         ctx.fillText(p.type === 'triple' ? '3X' : p.type === 'shield' ? 'SHD' : 'SLOW', p.x, p.y + 3);
 
-        const collected = Math.hypot(pCenterX - p.x, pCenterY - p.y) < p.radius + player.w / 2.2;
+        const collected = Math.hypot(pCenterX - p.x, pCenterY - p.y) < p.radius + 14;
         if (collected) {
           playSound('powerup');
           if (p.type === 'triple') tripleLaserTimer = 300;
@@ -393,22 +405,21 @@
         return p.y <= canvas.height + 20;
       });
 
-      // Boss Logic & Battles
+      // Boss Spawn Trigger
       if (score >= lastBossScore + 200 && !boss) {
         lastBossScore = score;
         spawnBoss();
       }
 
+      // Boss Logic
       if (boss) {
         if (boss.y < boss.targetY) boss.y += 1.5;
         boss.x += boss.vx;
         if (boss.x < 10 || boss.x > canvas.width - boss.w - 10) boss.vx *= -1;
 
-        // Render Boss
         ctx.fillStyle = '#ff007f'; ctx.shadowBlur = 15; ctx.shadowColor = '#ff007f';
         ctx.fillRect(boss.x, boss.y, boss.w, boss.h); ctx.shadowBlur = 0;
 
-        // Boss Attacks
         boss.shootCooldown--;
         if (boss.shootCooldown <= 0) {
           bossBullets.push({ x: boss.x + boss.w / 2, y: boss.y + boss.h, vx: -1.5, vy: 4 });
@@ -417,9 +428,9 @@
           playSound('boss_laser'); boss.shootCooldown = 65;
         }
 
-        // Bullets vs Boss Collision
+        // Player Bullets vs Boss Collision
         bullets = bullets.filter(b => {
-          if (b.x > boss.x && b.x < boss.x + boss.w && b.y > boss.y && b.y < boss.y + boss.h) {
+          if (boss && b.x > boss.x && b.x < boss.x + boss.w && b.y > boss.y && b.y < boss.y + boss.h) {
             boss.hp--;
             createExplosion(b.x, b.y, '#ff007f', 4);
             bossHpBar.style.width = `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%`;
@@ -427,9 +438,10 @@
             if (boss.hp <= 0) {
               createExplosion(boss.x + boss.w/2, boss.y + boss.h/2, '#ff007f', 40);
               triggerShake(18); playSound('explosion');
-              score += 100; updateHUD(); boss = null;
+              score += 100; updateHUD();
               bossBarWrap.style.display = 'none';
               spawnPowerUp(canvas.width / 2, 100);
+              boss = null;
             }
             return false;
           }
@@ -457,7 +469,7 @@
         spawnTimer = 0; spawnAsteroid();
       }
 
-      // Asteroid Mechanics (Dynamic Time-Slow & Collisions)
+      // Asteroid Mechanics
       const currentSpeedMult = timeSlowTimer > 0 ? 0.5 : 1.0;
       asteroids = asteroids.filter(a => {
         a.y += a.baseSpeed * currentSpeedMult;
@@ -487,7 +499,7 @@
         if (destroyed) return false;
 
         // Asteroid vs Player Collision Check
-        if (player.invulnerableTimer <= 0 && Math.hypot(pCenterX - a.x, pCenterY - a.y) < a.radius + player.w / 2.2) {
+        if (player.invulnerableTimer <= 0 && Math.hypot(pCenterX - a.x, pCenterY - a.y) < a.radius + 14) {
           createExplosion(a.x, a.y, '#00f6ff', 20);
           handlePlayerHit();
           return false;
@@ -496,7 +508,7 @@
         return a.y <= canvas.height + a.radius;
       });
 
-      // Render & Clean Particles
+      // Particles Update
       particles = particles.filter(p => {
         p.x += p.vx; p.y += p.vy; p.life--;
         ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.size, p.size);
