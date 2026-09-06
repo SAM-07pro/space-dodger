@@ -78,7 +78,7 @@
       <h1 id="title">SPACE DODGER: ULTIMATE</h1>
       <p id="subtitle">
         Move: ← → / A D / Touch Drag<br>
-        Fire: SPACE / Hold Screen | Pause: P<br>
+        Fire: SPACE / W / ↑ / Touch Drag | Pause: P<br>
         <span style="color: #ffff00;">Collect Power-Ups & Defeat Bosses!</span>
       </p>
       <button id="start-btn" onclick="startGame()">ENGAGE MISSION</button>
@@ -222,14 +222,13 @@
 
     function spawnAsteroid() {
       const rand = Math.random();
-      let hp = 1, radius = 14, speed = Math.random() * 2 + 2, color = '#ff007f';
-      if (rand > 0.75) { hp = 3; radius = 22; speed = Math.random() * 1 + 1.2; color = '#ff9900'; }
-      else if (rand > 0.5) { hp = 1; radius = 9; speed = Math.random() * 2.5 + 3.8; color = '#ffff00'; }
+      let hp = 1, radius = 14, baseSpeed = Math.random() * 2 + 2, color = '#ff007f';
+      if (rand > 0.75) { hp = 3; radius = 22; baseSpeed = Math.random() * 1 + 1.2; color = '#ff9900'; }
+      else if (rand > 0.5) { hp = 1; radius = 9; baseSpeed = Math.random() * 2.5 + 3.8; color = '#ffff00'; }
 
-      const timeFactor = timeSlowTimer > 0 ? 0.5 : 1.0;
       asteroids.push({
         x: Math.random() * (canvas.width - radius * 2) + radius,
-        y: -radius, radius, speed: speed * timeFactor, hp, color
+        y: -radius, radius, baseSpeed, hp, color
       });
     }
 
@@ -239,6 +238,23 @@
         x: canvas.width / 2 - 40, y: -80, targetY: 60, w: 80, h: 45,
         maxHp: 30, hp: 30, vx: 2, shootCooldown: 0
       };
+      bossHpBar.style.width = '100%';
+    }
+
+    function handlePlayerHit() {
+      combo = 0; comboTimer = 0;
+      if (shieldActive) {
+        shieldActive = false;
+        player.invulnerableTimer = 30;
+        playSound('hit');
+      } else {
+        lives--;
+        player.invulnerableTimer = 60;
+        triggerShake(10);
+        playSound('hit');
+        updateHUD();
+        if (lives <= 0) gameOver();
+      }
     }
 
     function startGame() {
@@ -329,7 +345,7 @@
 
       // Render Player Ship & Shield
       if (player.invulnerableTimer > 0) player.invulnerableTimer--;
-      if (player.invulnerableTimer === 0 || Math.floor(player.invulnerableTimer / 4) % 2 === 0) {
+      if (player.invulnerableTimer <= 0 || Math.floor(player.invulnerableTimer / 4) % 2 === 0) {
         ctx.fillStyle = player.invulnerableTimer > 0 ? '#ffffff' : '#00f6ff';
         ctx.shadowBlur = 12; ctx.shadowColor = '#00f6ff';
         ctx.beginPath();
@@ -346,17 +362,19 @@
         }
       }
 
-      // Render Bullets
+      // Render & Update Bullets (Filter pattern)
       ctx.fillStyle = '#ff007f'; ctx.shadowBlur = 8; ctx.shadowColor = '#ff007f';
-      bullets.forEach((b, idx) => {
+      bullets = bullets.filter(b => {
         b.x += b.vx; b.y += b.vy;
         ctx.fillRect(b.x, b.y, b.w, b.h);
-        if (b.y < -15 || b.x < 0 || b.x > canvas.width) bullets.splice(idx, 1);
+        return !(b.y < -15 || b.x < -10 || b.x > canvas.width + 10);
       });
       ctx.shadowBlur = 0;
 
-      // Render Power-Ups
-      powerups.forEach((p, pIdx) => {
+      // Power-Up Physics & Collisions (Filter pattern)
+      const pCenterX = player.x + player.w / 2;
+      const pCenterY = player.y + player.h / 2;
+      powerups = powerups.filter(p => {
         p.y += p.vy;
         ctx.fillStyle = p.type === 'triple' ? '#ffff00' : p.type === 'shield' ? '#00f6ff' : '#ff007f';
         ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle;
@@ -364,14 +382,15 @@
         ctx.fillStyle = '#05000a'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
         ctx.fillText(p.type === 'triple' ? '3X' : p.type === 'shield' ? 'SHD' : 'SLOW', p.x, p.y + 3);
 
-        if (Math.hypot((player.x + player.w/2) - p.x, (player.y + player.h/2) - p.y) < p.radius + player.w / 2) {
+        const collected = Math.hypot(pCenterX - p.x, pCenterY - p.y) < p.radius + player.w / 2.2;
+        if (collected) {
           playSound('powerup');
           if (p.type === 'triple') tripleLaserTimer = 300;
           if (p.type === 'shield') shieldActive = true;
           if (p.type === 'slow') timeSlowTimer = 360;
-          powerups.splice(pIdx, 1);
+          return false;
         }
-        if (p.y > canvas.height + 20) powerups.splice(pIdx, 1);
+        return p.y <= canvas.height + 20;
       });
 
       // Boss Logic & Battles
@@ -398,12 +417,12 @@
           playSound('boss_laser'); boss.shootCooldown = 65;
         }
 
-        // Bullets vs Boss
-        bullets.forEach((b, bIdx) => {
+        // Bullets vs Boss Collision
+        bullets = bullets.filter(b => {
           if (b.x > boss.x && b.x < boss.x + boss.w && b.y > boss.y && b.y < boss.y + boss.h) {
-            boss.hp--; bullets.splice(bIdx, 1);
+            boss.hp--;
             createExplosion(b.x, b.y, '#ff007f', 4);
-            bossHpBar.style.width = `${(boss.hp / boss.maxHp) * 100}%`;
+            bossHpBar.style.width = `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%`;
 
             if (boss.hp <= 0) {
               createExplosion(boss.x + boss.w/2, boss.y + boss.h/2, '#ff007f', 40);
@@ -412,25 +431,23 @@
               bossBarWrap.style.display = 'none';
               spawnPowerUp(canvas.width / 2, 100);
             }
+            return false;
           }
+          return true;
         });
       }
 
-      // Boss Bullets Render & Hit Player
-      ctx.fillStyle = '#ffff00';
-      bossBullets.forEach((bb, bbIdx) => {
+      // Boss Bullets Render & Collisions
+      bossBullets = bossBullets.filter(bb => {
         bb.x += bb.vx; bb.y += bb.vy;
+        ctx.fillStyle = '#ffff00';
         ctx.beginPath(); ctx.arc(bb.x, bb.y, 4, 0, Math.PI * 2); ctx.fill();
 
-        if (player.invulnerableTimer === 0 && Math.hypot((player.x + player.w/2) - bb.x, (player.y + player.h/2) - bb.y) < 18) {
-          bossBullets.splice(bbIdx, 1);
-          if (shieldActive) { shieldActive = false; player.invulnerableTimer = 30; playSound('hit'); }
-          else {
-            lives--; player.invulnerableTimer = 60; triggerShake(12); playSound('hit');
-            updateHUD(); if (lives <= 0) gameOver();
-          }
+        if (player.invulnerableTimer <= 0 && Math.hypot(pCenterX - bb.x, pCenterY - bb.y) < 18) {
+          handlePlayerHit();
+          return false;
         }
-        if (bb.y > canvas.height + 10) bossBullets.splice(bbIdx, 1);
+        return bb.y <= canvas.height + 10;
       });
 
       // Spawn Regular Asteroids
@@ -440,44 +457,50 @@
         spawnTimer = 0; spawnAsteroid();
       }
 
-      // Asteroid Collisions & Drop Powerups
-      asteroids.forEach((a, aIdx) => {
-        a.y += a.speed;
+      // Asteroid Mechanics (Dynamic Time-Slow & Collisions)
+      const currentSpeedMult = timeSlowTimer > 0 ? 0.5 : 1.0;
+      asteroids = asteroids.filter(a => {
+        a.y += a.baseSpeed * currentSpeedMult;
         ctx.strokeStyle = a.color; ctx.lineWidth = 2.5;
         ctx.shadowBlur = 8; ctx.shadowColor = a.color;
         ctx.beginPath(); ctx.arc(a.x, a.y, a.radius, 0, Math.PI * 2); ctx.stroke();
         ctx.shadowBlur = 0;
 
-        bullets.forEach((b, bIdx) => {
-          if (Math.hypot(b.x - a.x, b.y - a.y) < a.radius + b.w) {
-            a.hp--; bullets.splice(bIdx, 1); createExplosion(b.x, b.y, a.color, 5);
+        // Player Bullets vs Asteroid
+        let destroyed = false;
+        bullets = bullets.filter(b => {
+          if (!destroyed && Math.hypot(b.x - a.x, b.y - a.y) < a.radius + b.w) {
+            a.hp--; createExplosion(b.x, b.y, a.color, 5);
             if (a.hp <= 0) {
+              destroyed = true;
               createExplosion(a.x, a.y, a.color, 16); playSound('explosion');
               if (Math.random() < 0.2) spawnPowerUp(a.x, a.y);
-              asteroids.splice(aIdx, 1);
               combo++; comboTimer = 120;
               const mult = Math.min(4, 1 + Math.floor(combo / 5));
               score += (a.radius > 20 ? 30 : 10) * mult; updateHUD();
             }
+            return false;
           }
+          return true;
         });
 
-        if (player.invulnerableTimer === 0 && Math.hypot((player.x + player.w/2) - a.x, (player.y + player.h/2) - a.y) < a.radius + player.w / 2.2) {
-          createExplosion(a.x, a.y, '#00f6ff', 20); playSound('hit'); asteroids.splice(aIdx, 1);
-          if (shieldActive) { shieldActive = false; player.invulnerableTimer = 30; }
-          else {
-            lives--; player.invulnerableTimer = 60; triggerShake(10); updateHUD();
-            if (lives <= 0) gameOver();
-          }
+        if (destroyed) return false;
+
+        // Asteroid vs Player Collision Check
+        if (player.invulnerableTimer <= 0 && Math.hypot(pCenterX - a.x, pCenterY - a.y) < a.radius + player.w / 2.2) {
+          createExplosion(a.x, a.y, '#00f6ff', 20);
+          handlePlayerHit();
+          return false;
         }
-        if (a.y > canvas.height + a.radius) asteroids.splice(aIdx, 1);
+
+        return a.y <= canvas.height + a.radius;
       });
 
-      // Render Particles
-      particles.forEach((p, pIdx) => {
+      // Render & Clean Particles
+      particles = particles.filter(p => {
         p.x += p.vx; p.y += p.vy; p.life--;
         ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.size, p.size);
-        if (p.life <= 0) particles.splice(pIdx, 1);
+        return p.life > 0;
       });
 
       ctx.restore();
